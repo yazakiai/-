@@ -1134,7 +1134,33 @@ function setTool(t, room){
 /* ===== 操作バー ===== */
 const typeOptions = v => TYPES.map(t => `<option value="${t.id}"${t.id===v?' selected':''}>${t.name}</option>`).join('');
 function areaHTML(cells){ return `${tsubo(cells)}坪<small>${jo(cells)}帖　${(cells*(MM/1000)**2).toFixed(2)}㎡</small>`; }
-function totalCells(){ return items.filter(i => i.kind !== 'stroke' && i.kind !== 'door' && i.type !== 'porch').reduce((a,i) => a + cellArea(i), 0); }
+/* 延床（マス数）：部屋どうしの重なりを二重に数えないよう、全部の部屋を合わせた形の面積を求める。
+   1マスを4×4に分けた点のうち、どこかの部屋に入っている点を数える（方眼に沿った部屋なら誤差なし） */
+let areaCache = {key:'', val:0};
+function totalCells(){
+  const polys = items.filter(i => (i.kind === 'rect' || i.kind === 'poly' || i.kind === 'free') && i.type !== 'porch').map(ptsOf).filter(P => P.length >= 3);
+  const key = JSON.stringify(polys);
+  if(key === areaCache.key) return areaCache.val;
+  let val = 0;
+  if(polys.length){
+    const bbs = polys.map(P => { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for(const [x, y] of P){ a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); } return [a, b, c, d]; });
+    const X0 = Math.floor(Math.min(...bbs.map(q => q[0]))), Y0 = Math.floor(Math.min(...bbs.map(q => q[1])));
+    const X1 = Math.ceil(Math.max(...bbs.map(q => q[2]))), Y1 = Math.ceil(Math.max(...bbs.map(q => q[3])));
+    const R = 4; let cnt = 0;
+    for(let iy = 0; iy < (Y1 - Y0)*R; iy++){
+      const y = Y0 + (iy + .5)/R;
+      for(let ix = 0; ix < (X1 - X0)*R; ix++){
+        const x = X0 + (ix + .5)/R, p = {x, y};
+        for(let k=0; k<polys.length; k++){ const q = bbs[k]; if(x < q[0] || x > q[2] || y < q[1] || y > q[3]) continue; if(inPoly(p, polys[k])){ cnt++; break; } }
+      }
+    }
+    val = cnt/(R*R);
+  }
+  areaCache = {key, val};
+  return val;
+}
+/* 重なりを考えずに単純に足した面積（比較用） */
+function sumCells(){ return items.filter(i => (i.kind === 'rect' || i.kind === 'poly' || i.kind === 'free') && i.type !== 'porch').reduce((a, i) => a + cellArea(i), 0); }
 
 function buildCtx(){
   const sel = getSel();
@@ -1284,7 +1310,7 @@ function buildCtx(){
         + `<span class="lb">段数</span><select id="pRis">${[[1,'1段'],[2,'2段'],[3,'3段']].map(([v, n]) => `<option value="${v}"${porchSteps(sel) === v ? ' selected' : ''}>${n}</option>`).join('')}</select>` : '')
       + `<span class="lb">床</span><select id="ctxFloor"><option value="auto">標準（自動）</option><option value="plain">部屋の色のまま</option>${FLOORS.map(f => `<option value="${f.id}">${f.name}</option>`).join('')}</select>` + tail;
   }
-  return `<span class="lb">延床（ポーチ除く）</span><span class="area" id="ctxTotal"></span>`;
+  return `<span class="lb">延床（ポーチ除く・重なりは1回だけ）</span><span class="area" id="ctxTotal"></span><span class="lb" id="ctxOverlap"></span>`;
 }
 let ctxKey = '';
 function renderCtx(){
@@ -1307,6 +1333,7 @@ function renderCtx(){
   const fh2 = $('fHt'); if(fh2 && sel && document.activeElement !== fh2) fh2.value = Math.round((sel.h || 1200)/10);
   const fl = $('ctxFloor'); if(fl && sel && document.activeElement !== fl) fl.value = sel.floor || 'auto';
   const tt = $('ctxTotal'); if(tt) tt.innerHTML = areaHTML(totalCells());
+  const ov = $('ctxOverlap'); if(ov){ const d = sumCells() - totalCells(); ov.textContent = d > .01 ? `（重なり ${fmt(d/8)}帖 を除外）` : ''; }
   const ts = $('ctxType'); if(ts && sel && document.activeElement !== ts) ts.value = sel.type;
 }
 ctx.addEventListener('click', e => { const b = e.target.closest('button[data-act]'); if(b && !b.disabled) act(b.dataset.act); });
