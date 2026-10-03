@@ -69,6 +69,10 @@ body.is3d .fin-sheet .sheet-panel{max-height:56vh}
 #hint{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.94);
   border:1px solid var(--line);padding:6px 14px;border-radius:999px;font-size:12px;color:var(--muted);
   pointer-events:none;white-space:nowrap;max-width:calc(100vw - 24px);overflow:hidden;text-overflow:ellipsis}
+#floorTabs{position:absolute;left:10px;top:52px;display:flex;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;z-index:2;box-shadow:0 2px 8px rgba(38,48,59,.08)}
+#floorTabs button{min-width:46px;height:36px;border:none;background:#fff;font:inherit;font-size:14px;font-weight:700;color:var(--muted);cursor:pointer}
+#floorTabs button.on{background:var(--ink);color:#fff}
+body.is3d #floorTabs{display:none}
 #zoom{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:10px}
 #zoom .ib{width:36px;height:36px}
 #zoomLabel{font-size:12px;min-width:44px;text-align:center;color:var(--muted);cursor:pointer}
@@ -189,6 +193,7 @@ body.is3d #ctx,body.is3d #tray,body.is3d #zoom,body.is3d #scale,body.is3d #hint,
     </svg>
     <div id="hint"></div>
     <div id="scale"><i id="scaleBar"></i>1マス 455mm角（8マスで1帖、16マスで1坪）</div>
+    <div id="floorTabs" role="tablist" aria-label="階の切り替え"><button data-floor="1">1F</button><button data-floor="2">2F</button></div>
     <div id="zoom">
       <button class="ib" id="zOut" aria-label="縮小"><svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 8h10"/></svg></button>
       <span id="zoomLabel" title="100%に戻す">100%</span>
@@ -244,6 +249,7 @@ body.is3d #ctx,body.is3d #tray,body.is3d #zoom,body.is3d #scale,body.is3d #hint,
     <button data-v="top">真上から</button>
     <button data-v="walls" id="bWalls">壁を低くする</button>
     <button data-v="spin" id="bSpin">自動で回転</button>
+    <button data-v="hide2f" id="bHide2F" hidden>2Fを隠す</button>
     <button data-v="sun" id="bSun">太陽</button>
     <button data-v="finish">外観・素材</button>
     <button data-v="roof" id="bRoof">屋根</button>
@@ -298,7 +304,21 @@ const TYPES = [
   {id:'entry',   name:'玄関',        color:'#D4E1C6', w:4, h:4},
   {id:'porch',   name:'玄関ポーチ',  color:'#E8EADD', w:6, h:4},
   {id:'other',   name:'その他',      color:'#ECEDEF', w:4, h:4},
+  {id:'void',    name:'吹き抜け',    color:'#F4F6F8', w:4, h:4},
 ];
+/* ===== 2階建て ===== */
+function renderFloorTabs(){
+  const t = document.getElementById('floorTabs'); if(!t) return;
+  t.querySelectorAll('[data-floor]').forEach(b => b.classList.toggle('on', +b.dataset.floor === curFloor));
+}
+let curFloor = 1;                                                    // 2Dで編集している階
+const LEVEL_KINDS = new Set(['rect','poly','free','stroke','door','furn','roof']);   // 階を持つもの（土地・外構は地面）
+const SLAB = 0.3;                                                    // 1階の天井から2階の床まで（床から床まで2.7m）
+const flr = it => it.lv || 1;                                       // 階の番号（it.floor は床材なので別の名前）
+const isGroundFurn = it => it.kind === 'furn' && (() => { const t = FURN.find(x => x.id === it.ftype) || {}; return !!(t.ext || t.garden || (t.light && t.ground)) || it.ftype === 'golf8' || it.ftype === 'passo'; })();
+const onCur = it => LEVEL_KINDS.has(it.kind) ? flr(it) === curFloor : curFloor === 1;
+const isRoomKind = it => it.kind === 'rect' || it.kind === 'poly' || it.kind === 'free';
+const hasFloor2 = () => items.some(i => isRoomKind(i) && flr(i) === 2);
 const ICON_LIGHT = '<path d="M12 3v4"/><path d="M6 12a6 5 0 0112 0z" stroke-linejoin="round"/><path d="M9 15l-1 3M12 15v4M15 15l1 3" stroke-width="1.3"/>';
 const ICON_EXT = '<rect x="3" y="7" width="13" height="10" rx="1"/><circle cx="8.5" cy="12" r="3"/><path d="M19 4v16M19 8h2M19 14h2"/>';
 const ICON_LAND = '<path d="M4 7l15-3 2 16-17 1z" stroke-linejoin="round" stroke-dasharray="3 2"/>';
@@ -357,6 +377,12 @@ const FURN = [
   {id:'hanger',   name:'ハンガーパイプ', short:'ハンガー', w:1500, d:550, h:1700, color:'#D8C3A3'},
   {id:'hanger2',  name:'ハンガーパイプ（服なし）', short:'パイプ(空)', w:1500, d:550, h:1700, color:'#D8C3A3'},
   {id:'closet',   name:'クローゼット', w:1200, d:600, h:2000, color:'#EFEBE3'},
+  {id:'hanger3',  name:'ハンガーパイプ（板なし）', short:'パイプ(板なし)', w:1500, d:550, h:1700, color:'#C3C8CD'},
+  {id:'chest',    name:'チェスト（白）',   short:'チェスト', w:800, d:450, h:1000, color:'#F4F3EF'},
+  {id:'cbox',     name:'カラーボックス（90角）', short:'カラーボックス', w:900, d:300, h:900, color:'#F2F0EB'},
+  {id:'cboxOpen', name:'カラーボックス（背板なし・抜け）', short:'ボックス(抜け)', w:900, d:300, h:900, color:'#F2F0EB'},
+  {id:'stairs',   name:'階段（直線）',     short:'階段', w:800, d:3640, h:2700, color:'#C9A57A'},
+  {id:'roomba',   name:'ルンバ（基地つき）', short:'ルンバ', w:450, d:450, h:480, color:'#2F3134'},
   {id:'toilet',   name:'トイレ',       w:400,  d:700,  h:800,  color:'#F7F8F9'},
   {id:'vanity',   name:'洗面台',       w:900,  d:550,  h:1900, color:'#E7E1D8'},
   {id:'sofa',     name:'ソファ',       w:1800, d:850,  h:800,  color:'#8FA89A'},
@@ -365,6 +391,10 @@ const FURN = [
   {id:'lowtable', name:'ローテーブル', w:1000, d:500,  h:400,  color:'#C29A6E'},
   {id:'desk',     name:'デスク',       w:1000, d:600,  h:720,  color:'#C9A57A'},
   {id:'rug',      name:'ラグ',         w:2000, d:1400, h:10,   color:'#D9CFC1'},
+  {id:'carportC', name:'カーポート（片足）', short:'カーポート片足', w:2700, d:5000, h:2300, color:'#3A3C3F', ext:true},
+  {id:'carportN', name:'カーポート（4本柱）', short:'カーポート', w:2700, d:5000, h:2300, color:'#3A3C3F', ext:true},
+  {id:'shed',     name:'物置',             w:1800, d:900,  h:1900, color:'#B9BDBF', ext:true},
+  {id:'bike',     name:'自転車',           w:600,  d:1800, h:1000, color:'#2E5B8A', ext:true},
   {id:'acS',      name:'室外機（小）',       short:'室外機 小', w:700, d:260, h:540, color:'#F1F1EE', ext:true, ac:true},
   {id:'acM',      name:'室外機（中）',       short:'室外機 中', w:800, d:300, h:630, color:'#F1F1EE', ext:true, ac:true},
   {id:'acL',      name:'室外機（大）',       short:'室外機 大', w:900, d:340, h:800, color:'#F1F1EE', ext:true, ac:true},
@@ -682,6 +712,30 @@ function furnInner(tp, W, D, col, f){
     case 'fridge': return Rr(0,0,W,D,col) + Ln(0,D*.86,W,D*.86);
     case 'drum': return Rr(0,0,W,D,col,m*.08) + El(W/2,D*.58,m*.3,m*.3,'#fff') + El(W/2,D*.58,m*.2,m*.2,'#8FA3B3');
     case 'tvwall': return Rr(0,0,W,Math.max(D,.08),INK);
+    case 'hanger3': return `<line x1="0" y1="${D/2}" x2="${W}" y2="${D/2}" stroke="${INK}" stroke-width="2.4" vector-effect="non-scaling-stroke"/>` + Rr(0,0,W,D,'none',0,' stroke-dasharray="2 4" stroke-opacity=".5"');
+    case 'chest': { let s2 = Rr(0,0,W,D,col,.02); for(let i=1; i<4; i++) s2 += Ln(W*.06, D*.15 + i*D*.18, W*.94, D*.15 + i*D*.18, ' stroke-opacity=".4"'); return s2; }
+    case 'cbox': case 'cboxOpen': {
+      const n = Math.max(1, Math.round(W*MM/300)); let s2 = Rr(0,0,W,D,col);
+      for(let i=1; i<n; i++) s2 += Ln(W*i/n, 0, W*i/n, D);
+      if(tp === 'cboxOpen') s2 += Ln(0, D*.5, W, D*.5, ' stroke-dasharray="2 3" stroke-opacity=".5"');
+      return s2;
+    }
+    case 'stairs': {
+      // 階段：手前（下側）が1段目、奥へ上る。矢印は上る向き
+      const n = 14; let s2 = Rr(0, 0, W, D, col, 0, ' fill-opacity=".55"');
+      for(let i=1; i<n; i++) s2 += Ln(0, D - i*D/n, W, D - i*D/n, ' stroke-opacity=".55"');
+      s2 += `<path d="M${W/2} ${D*.92} L${W/2} ${D*.1} M${W/2 - W*.18} ${D*.1 + W*.22} L${W/2} ${D*.1} L${W/2 + W*.18} ${D*.1 + W*.22}" fill="none" stroke="${RED}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+      return s2;
+    }
+    case 'roomba': return Rr(W*.15, 0, W*.7, D*.32, col, .03) + El(W/2, D*.66, Math.min(W, D)*.37, Math.min(W, D)*.37, shade(col, .2)) + El(W/2, D*.66, Math.min(W, D)*.12, Math.min(W, D)*.12, '#9AA0A6');
+    case 'carportC': case 'carportN': {
+      const pz = .1*1000/MM; let s2 = Rr(0,0,W,D,'#A8C0D0',0,' fill-opacity=".25" stroke-dasharray="6 4"');
+      const posts = tp === 'carportC' ? [[pz, D*.12], [pz, D*.88]] : [[pz, pz], [W - pz, pz], [pz, D - pz], [W - pz, D - pz]];
+      for(const [x, y] of posts) s2 += Rr(x - pz*.6, y - pz*.6, pz*1.2, pz*1.2, col);
+      return s2;
+    }
+    case 'shed': return Rr(0,0,W,D,col,.02) + Ln(W/2, D*.7, W/2, D) + Ln(0, D*.7, W, D*.7, ' stroke-opacity=".5"');
+    case 'bike': { const r2 = Math.min(W*.35, D*.18); return Rr(W*.42, D*.1, W*.16, D*.8, col, .05) + Rr(W*.1, D*.14, W*.8, D*.05, INK) + El(W/2, D*.12, r2*.35, r2, 'none') + El(W/2, D*.88, r2*.35, r2, 'none'); }
     case 'hanger2': return Rr(0,0,W,D,col,0,' fill-opacity=".25" stroke-dasharray="4 3"') + `<line x1="0" y1="${D/2}" x2="${W}" y2="${D/2}" stroke="${INK}" stroke-width="2.4" vector-effect="non-scaling-stroke"/>`;
     case 'closet': { const r2 = W/2; return Rr(0,0,W,D,col) + Ln(0,D*.55,W,D*.55,' stroke-dasharray="3 3"') + `<path d="M0 ${D} A${r2} ${r2} 0 0 0 ${r2} ${D+r2*.0}" fill="none"/>` + Ln(W/2,D*.2,W/2,D) + `<path d="M0 ${D+r2} A${r2} ${r2} 0 0 0 ${r2} ${D}" fill="none" stroke="${INK}" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/><path d="M${W} ${D+r2} A${r2} ${r2} 0 0 1 ${r2} ${D}" fill="none" stroke="${INK}" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>`; }
     case 'washer': return Rr(0,0,W,D,col) + El(W/2,D/2,m*.32,m*.32,'#fff');
@@ -720,7 +774,7 @@ function furnSVG(f, lifted){
   const t = furnOf(f.ftype), W = f.fw/MM, D = f.fd/MM, fp = fpt(f), cx = f.x + fp.W/2, cy = f.y + fp.D/2;
   let s = `<g transform="translate(${cx} ${cy}) rotate(${f.rot||0}) translate(${-W/2} ${-D/2})"${lifted ? ' filter="url(#lift)"' : ''}>${furnInner(f.ftype, W, D, itemColor(f), f)}</g>`;
   const fs = clamp(Math.min(fp.W, fp.D)*0.3, 0.3, 0.55);
-  if(!['treeD','treeE','conifer','shrub','pole','cube','softcream','acS','acM','acL','ecoHP','kyuto','pcs','meter','vent','faucet','plant','chair','toilet','washer','drum','tvwall','golf8','passo','dl','ceil','pend','spot','linel'].includes(f.ftype) && t.name.length*fs < fp.W*0.92 && fp.D > fs*1.3)
+  if(!['roomba','bike','treeD','treeE','conifer','shrub','pole','cube','softcream','acS','acM','acL','ecoHP','kyuto','pcs','meter','vent','faucet','plant','chair','toilet','washer','drum','tvwall','golf8','passo','dl','ceil','pend','spot','linel'].includes(f.ftype) && t.name.length*fs < fp.W*0.92 && fp.D > fs*1.3)
     s += `<text x="${cx}" y="${cy + fs*0.35}" text-anchor="middle" font-size="${fs}" fill="${INK}" font-family="${FONT}" pointer-events="none" stroke="#fff" stroke-opacity=".8" stroke-width="${fs*0.18}" paint-order="stroke">${t.name}</text>`;
   return `<g>${s}</g>`;
 }
@@ -735,19 +789,26 @@ function sceneSVG(k, liftId, maskId){
   const lands = items.filter(i => i.kind === 'land').map(l => `<polygon points="${l.pts.map(p => p.join(',')).join(' ')}" fill="${itemColor(l)}" fill-opacity=".22" stroke="#2E5B8A" stroke-width="1.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`).join('');
   for(const it of items){
     if(it.kind === 'land' || it.kind === 'ext' || it.kind === 'eline') continue;
+    if(!onCur(it)) continue;
     if(it.kind === 'furn'){ furns += furnSVG(it, it.id === liftId); continue; }
     if(it.kind === 'roof'){ continue; }
     if(it.kind === 'door' && (it.dtype === 'accent' || it.dtype === 'wall')){ (it.dtype === 'wall' ? (walls += doorSVG(it)) : (doorSyms += doorSVG(it))); continue; }
     if(it.kind === 'door'){ doorSyms += doorSVG(it); const [a,b] = ptsOf(it); cuts += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#000" stroke-width="${7*k}"/>`; continue; }
     const p = roomParts(it, it.id === liftId); fills += p.fill; walls += p.wall; labels += p.label;
+    if(it.type === 'void'){ const b = bbox(it); fills += `<path d="M${b.x} ${b.y}L${b.x + b.w} ${b.y + b.h}M${b.x + b.w} ${b.y}L${b.x} ${b.y + b.h}" stroke="#8A95A0" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>`; }
   }
+  // もう一方の階は点線で薄く表示（位置合わせ用）。もう一方の階の階段も薄く出す
+  const ghost = items.filter(i => isRoomKind(i) && flr(i) !== curFloor && i.type !== 'porch')
+    .map(i => `<polygon points="${ptsOf(i).map(q => q.join(',')).join(' ')}" fill="#8E99A6" fill-opacity=".07" stroke="#5F6B78" stroke-opacity=".6" stroke-width="1.2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`).join('');
+  // もう一方の階の階段は、部屋の色の上に薄く出す（2階の吹き抜け・ホールと位置を合わせやすいように）
+  furns = items.filter(i => i.kind === 'furn' && i.ftype === 'stairs' && flr(i) !== curFloor).map(f => `<g opacity=".4" pointer-events="none">${furnSVG(f, false)}</g>`).join('') + furns;
   let mask = '';
   if(cuts){
     const B = allBBox(), x = B.x-10, y = B.y-10, w = B.w+20, h = B.h+20;
     mask = `<mask id="${maskId}" maskUnits="userSpaceOnUse" x="${x}" y="${y}" width="${w}" height="${h}"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#fff"/>${cuts}</mask>`;
   }
-  const roofs = roofMode ? items.filter(i => i.kind === 'roof').map(roofSVG).join('') : '';
-  return mask + `<g>${lands}</g><g>${exts}</g><g${roofMode ? ' opacity=".45"' : ''}><g>${fills}</g><g${cuts ? ` mask="url(#${maskId})"` : ''}>${walls}</g><g>${doorSyms}</g><g>${labels}</g><g>${furns}</g></g><g>${roofs}</g>`;
+  const roofs = roofMode ? items.filter(i => i.kind === 'roof' && onCur(i)).map(roofSVG).join('') : '';
+  return mask + `<g${curFloor !== 1 ? ' opacity=".35"' : ''}><g>${lands}</g><g>${exts}</g></g><g>${ghost}</g><g${roofMode ? ' opacity=".45"' : ''}><g>${fills}</g><g${cuts ? ` mask="url(#${maskId})"` : ''}>${walls}</g><g>${doorSyms}</g><g>${labels}</g><g>${furns}</g></g><g>${roofs}</g>`;
 }
 /* 線（側溝・フェンス）の長さを変える：始点と向きはそのまま、終点を動かす */
 function setElineLen(e, L){
@@ -880,6 +941,10 @@ function hitHandle(it, w){
   return best;
 }
 function hitItem(w){
+  const ALL = items; items = items.filter(onCur);
+  try{ return hitItemCur(w); } finally { items = ALL; }
+}
+function hitItemCur(w){
   if(roofMode){
     for(let i=items.length-1; i>=0; i--){ const it = items[i]; if(it.kind === 'roof' && w.x>=it.x && w.x<=it.x+it.w && w.y>=it.y && w.y<=it.y+it.h) return it; }
     return null;
@@ -1023,6 +1088,8 @@ function hintText(){
 let raf = 0;
 function scheduleRender(){ if(!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); }
 function render(){
+  for(const it of items) if(LEVEL_KINDS.has(it.kind) && it.lv == null) it.lv = isGroundFurn(it) ? 1 : curFloor;
+  renderFloorTabs();
   updateGrid();
   world.setAttribute('transform', `translate(${view.ox} ${view.oy}) scale(${view.s})`);
   const liftId = gesture && gesture.type === 'move' ? gesture.id : null;
@@ -1136,11 +1203,13 @@ const typeOptions = v => TYPES.map(t => `<option value="${t.id}"${t.id===v?' sel
 function areaHTML(cells){ return `${tsubo(cells)}坪<small>${jo(cells)}帖　${(cells*(MM/1000)**2).toFixed(2)}㎡</small>`; }
 /* 延床（マス数）：部屋どうしの重なりを二重に数えないよう、全部の部屋を合わせた形の面積を求める。
    1マスを4×4に分けた点のうち、どこかの部屋に入っている点を数える（方眼に沿った部屋なら誤差なし） */
-let areaCache = {key:'', val:0};
-function totalCells(){
-  const polys = items.filter(i => (i.kind === 'rect' || i.kind === 'poly' || i.kind === 'free') && i.type !== 'porch').map(ptsOf).filter(P => P.length >= 3);
-  const key = JSON.stringify(polys);
-  if(key === areaCache.key) return areaCache.val;
+let areaCache = {};
+function totalCells(fl0){
+  if(fl0 == null) return totalCells(1) + totalCells(2);
+  const polys = items.filter(i => isRoomKind(i) && i.type !== 'porch' && i.type !== 'void' && flr(i) === fl0).map(ptsOf).filter(P => P.length >= 3);
+  const key = fl0 + JSON.stringify(polys);
+  if(!areaCache[fl0]) areaCache[fl0] = {key:'', val:0};
+  if(key === areaCache[fl0].key) return areaCache[fl0].val;
   let val = 0;
   if(polys.length){
     const bbs = polys.map(P => { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for(const [x, y] of P){ a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); } return [a, b, c, d]; });
@@ -1156,11 +1225,11 @@ function totalCells(){
     }
     val = cnt/(R*R);
   }
-  areaCache = {key, val};
+  areaCache[fl0] = {key, val};
   return val;
 }
 /* 重なりを考えずに単純に足した面積（比較用） */
-function sumCells(){ return items.filter(i => (i.kind === 'rect' || i.kind === 'poly' || i.kind === 'free') && i.type !== 'porch').reduce((a, i) => a + cellArea(i), 0); }
+function sumCells(){ return items.filter(i => isRoomKind(i) && i.type !== 'porch' && i.type !== 'void').reduce((a, i) => a + cellArea(i), 0); }
 
 function buildCtx(){
   const sel = getSel();
@@ -1213,6 +1282,8 @@ function buildCtx(){
   if(sel && sel.kind === 'furn'){
     const num = (id, lab) => `<span class="lb">${lab}</span><input class="num" id="${id}" type="number" inputmode="numeric" step="5" min="5" max="1000"><span class="unit">cm</span>`;
     const ft = furnOf(sel.ftype);
+    const extraBtn = sel.ftype === 'hanger3' ? `<button data-act="clothes" class="${sel.clothes ? 'pri' : ''}">服をかける</button>`
+      : sel.ftype === 'roomba' ? `<span class="lb">3Dでタップすると掃除を開始・終了</span>` : '';
     if(ft.ext){
       return `<span class="area">${ft.name}</span>`
         + (ft.ac ? `<button data-act="acStand" class="${sel.stand ? 'pri' : ''}">架台に載せる</button>` : '')
@@ -1234,11 +1305,11 @@ function buildCtx(){
         + (round ? '' : `<button data-act="rotate">回転</button>`)
         + `<button data-act="dup">複製</button><button class="danger" data-act="del">削除</button>`;
     }
-    const kopt = sel.ftype === 'rug'
+    const kopt = extraBtn + (sel.ftype === 'rug'
       ? `<select id="rugPat"><option value="plain"${sel.pattern !== 'tile' ? ' selected' : ''}>無地</option><option value="tile"${sel.pattern === 'tile' ? ' selected' : ''}>タイルカーペット（90cm角）</option></select>`
       : sel.ftype === 'kitchen'
       ? `<select id="kSink"><option value="L"${sel.sink !== 'R' ? ' selected' : ''}>シンク左・コンロ右</option><option value="R"${sel.sink === 'R' ? ' selected' : ''}>シンク右・コンロ左</option></select>`
-        + `<button data-act="hood" class="${sel.hood === false ? '' : 'pri'}">レンジフード</button>` : '';
+        + `<button data-act="hood" class="${sel.hood === false ? '' : 'pri'}">レンジフード</button>` : '');
     return `<span class="area">${furnOf(sel.ftype).name}</span>` + kopt + num('fW','幅') + num('fD','奥行') + num('fH','高さ')
       + `<input type="color" id="ctxColor" aria-label="色"><button data-act="resetColor">元の色</button>`
       + `<button data-act="rotate">回転</button><button data-act="dup">複製</button><button data-act="front">前面へ</button><button data-act="back">背面へ</button><button class="danger" data-act="del">削除</button>`;
@@ -1315,7 +1386,7 @@ function buildCtx(){
 let ctxKey = '';
 function renderCtx(){
   const sel = getSel();
-  const key = [tool, doorType, furnType, roofMode, sel ? sel.id : '', sel ? sel.shape : '', sel ? sel.solar : '', sel ? Math.round((sel.len||0)*MM) : '', sel ? sel.type : '', sel ? sel.kind : '', sel ? sel.dtype : '', sel ? sel.deco : '', sel ? sel.wtype : '', sel ? sel.frost : '', sel ? sel.hood : '', sel ? sel.dir : '', sel ? JSON.stringify(sel.stepSides || sel.stepSide || '') : '', sel ? sel.pattern : '', sel ? sel.on : '', sel ? sel.stand : '', sel ? sel.etype : '', sel ? sel.style : '', poly ? poly.pts.length : 0].join('|');
+  const key = [tool, doorType, furnType, roofMode, sel ? sel.id : '', sel ? sel.shape : '', sel ? sel.solar : '', sel ? Math.round((sel.len||0)*MM) : '', sel ? sel.type : '', sel ? sel.kind : '', sel ? sel.dtype : '', sel ? sel.deco : '', sel ? sel.wtype : '', sel ? sel.frost : '', sel ? sel.hood : '', sel ? sel.dir : '', sel ? JSON.stringify(sel.stepSides || sel.stepSide || '') : '', sel ? sel.pattern : '', sel ? sel.on : '', sel ? sel.stand : '', sel ? sel.etype : '', sel ? sel.style : '', sel ? sel.clothes : '', poly ? poly.pts.length : 0].join('|');
   if(key !== ctxKey){ ctxKey = key; ctx.innerHTML = buildCtx(); }
   const a = $('ctxArea'); if(a && sel) a.innerHTML = sel.type === 'porch' ? '<small>延床・帖数に含めない</small>' : areaHTML(cellArea(sel));
   const dW = $('dW'); if(dW && sel && document.activeElement !== dW) dW.value = Math.round(sel.len*MM/10);
@@ -1333,7 +1404,8 @@ function renderCtx(){
   const fh2 = $('fHt'); if(fh2 && sel && document.activeElement !== fh2) fh2.value = Math.round((sel.h || 1200)/10);
   const fl = $('ctxFloor'); if(fl && sel && document.activeElement !== fl) fl.value = sel.floor || 'auto';
   const tt = $('ctxTotal'); if(tt) tt.innerHTML = areaHTML(totalCells());
-  const ov = $('ctxOverlap'); if(ov){ const d = sumCells() - totalCells(); ov.textContent = d > .01 ? `（重なり ${fmt(d/8)}帖 を除外）` : ''; }
+  const ov = $('ctxOverlap'); if(ov){ const d = sumCells() - totalCells();
+    ov.textContent = (hasFloor2() ? `1F ${tsubo(totalCells(1))}坪・2F ${tsubo(totalCells(2))}坪　` : '') + (d > .01 ? `（重なり ${fmt(d/8)}帖 を除外）` : ''); }
   const ts = $('ctxType'); if(ts && sel && document.activeElement !== ts) ts.value = sel.type;
 }
 ctx.addEventListener('click', e => { const b = e.target.closest('button[data-act]'); if(b && !b.disabled) act(b.dataset.act); });
@@ -1456,6 +1528,7 @@ function act(a){
       sel.pts = sel.pts.map(([x, y]) => { const dx = x - c.x, dy = y - c.y; return [+(c.x + dx*Math.cos(rad) - dy*Math.sin(rad)).toFixed(4), +(c.y + dx*Math.sin(rad) + dy*Math.cos(rad)).toFixed(4)]; });
     } break;
     case 'roomLights': if(sel){ const fx = fixturesIn(sel), on = !fx.some(f => f.on !== false); pushHistory(); for(const f of fx) f.on = on; ctxKey = ''; } break;
+    case 'clothes': if(sel){ pushHistory(); sel.clothes = !sel.clothes; } break;
     case 'acStand': if(sel){ pushHistory(); sel.stand = !sel.stand; } break;
     case 'lk_2700': case 'lk_3500': case 'lk_5000': case 'lk_6500': if(sel){ pushHistory(); sel.kelvin = +a.slice(3); delete sel.temp; } break;
     case 'lOn': if(sel){ pushHistory(); sel.on = sel.on === false; } break;
@@ -1584,7 +1657,7 @@ svg.addEventListener('pointerdown', e => {
     const wallOn = (d, c, at) => {
       const k = Math.floor(at);
       return items.some(it => {
-        if(!(it.kind === 'rect' || it.kind === 'poly') || it.type === 'porch') return false;
+        if(!(it.kind === 'rect' || it.kind === 'poly') || it.type === 'porch' || !onCur(it)) return false;
         const P = ptsOf(it);
         return P.some((p0, i) => { const p1 = P[(i+1) % P.length];
           return d === 'h' ? (p0[1] === c && p1[1] === c && Math.min(p0[0], p1[0]) <= k && Math.max(p0[0], p1[0]) >= k + 1)
@@ -1623,7 +1696,7 @@ function beginMove(it, start){
   const before = snapshot(); pushHistory(before);
   const p = [...pointers.values()][0];
   const isRoom = it.kind === 'rect' || it.kind === 'poly' || it.kind === 'free';
-  const att = !isRoom ? [] : items.filter(d => (d.kind === 'door' && ptsOf(d).every(p => onBoundary(p, it)))
+  const att = !isRoom ? [] : items.filter(d => flr(d) === flr(it)).filter(d => (d.kind === 'door' && ptsOf(d).every(p => onBoundary(p, it)))
     || (d.kind === 'furn' && (() => { const b = bbox(d); return inPoly({x:b.x+b.w/2, y:b.y+b.h/2}, ptsOf(it)); })())).map(d => clone(d));
   gesture = {type:'move', id:it.id, att, w0:start.w, orig:clone(it), before, start, moved:false, last:p ? {x:p.x, y:p.y} : {x:start.cx, y:start.cy}};
   if(navigator.vibrate) try{ navigator.vibrate(12); }catch(_){}
@@ -1797,7 +1870,7 @@ function endPointer(e){
         let rr;
         if(g.dragging) rr = placeRect(g);
         else {
-          const w0 = g.start.w, room = items.slice().reverse().find(i => (i.kind === 'rect' || i.kind === 'poly' || i.kind === 'free') && i.type !== 'porch' && inPoly(w0, ptsOf(i)));
+          const w0 = g.start.w, room = items.slice().reverse().find(i => (i.kind === 'rect' || i.kind === 'poly' || i.kind === 'free') && i.type !== 'porch' && onCur(i) && inPoly(w0, ptsOf(i)));
           if(room){ const bb = bbox(room); rr = {x:Math.floor(bb.x), y:Math.floor(bb.y), w:Math.ceil(bb.x + bb.w) - Math.floor(bb.x), h:Math.ceil(bb.y + bb.h) - Math.floor(bb.y)}; }
           else rr = {x:snap(w0.x - 4), y:snap(w0.y - 4), w:8, h:8};
         }
@@ -2069,12 +2142,19 @@ function afterSwitch(){
   undoStack = []; redoStack = []; selId = null; poly = null;
   lastSaved = saveKey(); setTool('select'); showPlanName(); setSaveState(savedLabel()); fitView();
 }
+document.getElementById('floorTabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-floor]'); if(!b) return;
+  const f = +b.dataset.floor; if(f === curFloor) return;
+  curFloor = f; selId = null; poly = null; if(tool !== 'select') setTool('select');
+  toast(f === 2 && !hasFloor2() ? '2階を編集します。1階は点線で薄く表示されます' : `${f}階を編集中`);
+  scheduleRender();
+});
 async function openPlan(id){
   await flushSave();
   const p = plans.find(p => p.id === id); if(!p) return;
   let arr = [], st = null;
   try{ const d = JSON.parse(await store.get(PK(id))); arr = (Array.isArray(d) ? d : (d.v === 2 ? d.items : upgradeV1(d.items))) || []; st = d && d.settings; }catch(_){}
-  cur = {id, name:p.name}; items = arr; settings = {...DEF_SETTINGS, ...(st || {})}; afterSwitch();
+  cur = {id, name:p.name}; items = arr; settings = {...DEF_SETTINGS, ...(st || {})}; curFloor = 1; afterSwitch();
   store.set(CURK, id).catch(() => {});
 }
 async function createPlan(name, arr, st){
@@ -2173,7 +2253,10 @@ let THREEP = null, mode3d = false;
 let R3 = null;                         // renderer / scene / camera 等
 let wallLow = false, autoSpin = false, showLabels = true;
 let walk = false;                      // 歩行モード
-const player = {x:0, z:0, yaw:0, pitch:-0.08, eye:1.5, target:null, stuck:0};
+const player = {x:0, z:0, yaw:0, pitch:-0.08, eye:1.5, target:null, stuck:0, fy:0};
+let buildLevel = 0, hide2F = false;    // 3Dを組み立て中の階（0＝組み立て中でない）／2階を隠す
+const levelY = lv => lv > 1 ? WALL_H + SLAB : 0;
+const playerLevel = () => player.fy >= levelY(2) - .6 ? 2 : 1;
 const doorState = {};                  // 扉ごとの開閉（true = 開）
 const keys = new Set();
 const joy = {x:0, y:0, id:null};
@@ -2246,7 +2329,7 @@ function collectWalls(){
   for(const it of items){
     if(it.kind === 'door' || it.kind === 'furn' || it.kind === 'roof' || it.kind === 'land' || it.kind === 'ext' || it.kind === 'eline') continue;
     if(it.kind === 'stroke'){ for(let i=1; i<it.pts.length; i++) add(it.pts[i-1], it.pts[i]); continue; }
-    if(it.type === 'porch') continue;
+    if(it.type === 'porch' || it.type === 'void') continue;
     const P = ptsOf(it);
     for(let i=0; i<P.length; i++) add(P[i], P[(i+1)%P.length]);
   }
@@ -2591,7 +2674,7 @@ function build3D(){
   const T = window.THREE;
   if(R3.root){ R3.scene.remove(R3.root); disposeTree(R3.root); }
   const root = new T.Group(), walls = new T.Group(), labels = new T.Group();
-  R3.doors = []; R3.doorMeshes = []; R3.floors = []; R3.floorInfo = []; R3.colliders = [];
+  R3.doors = []; R3.doorMeshes = []; R3.floors = []; R3.floorInfo = []; R3.colliders = []; R3.roombas = [];
   root.add(walls); root.add(labels);
   const b = allBBox(), cx = (b.x + b.w/2)*M, cz = (b.y + b.h/2)*M, size = Math.max(b.w, b.h)*M;
   R3.size = size; R3.center = [cx, cz];
@@ -2699,14 +2782,39 @@ function build3D(){
     R3.colliders.push([ax, az, bx, bz, .08]);
   }
 
+  // ===== ここから階ごとに組み立てる（2階は1階の上に載せる） =====
+  const ALL = items, trueRoot = root;
+  const levels = ALL.some(i => isRoomKind(i) && flr(i) === 2) && !wallLow ? [1, 2] : [1];
+  R3.topLevel = levels[levels.length - 1]; R3.allRoofParts = ALL.some(i => i.kind === 'roof');
+  R3.levelRoots = []; R3.wallsList = []; R3.labelsList = []; R3.ceilGs = []; R3.lightGs = []; R3.dayGs = []; R3.dayLights = []; R3.winList = [];
+  // 階段の穴・吹き抜け（2階の床と1階の天井に開ける）
+  const stairPolys = ALL.filter(i => i.kind === 'furn' && i.ftype === 'stairs' && flr(i) === 1).map(f => { const b = bbox(f); return [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]]; });
+  const voidPolys = ALL.filter(i => isRoomKind(i) && i.type === 'void' && flr(i) === 2).map(ptsOf);
+  const holesIn = (P, list) => list.filter(H2 => { const c = H2.reduce((a, q) => [a[0] + q[0]/H2.length, a[1] + q[1]/H2.length], [0, 0]);
+    return H2.every(q => inPoly({x:q[0] + (c[0] - q[0])*.02, y:q[1] + (c[1] - q[1])*.02}, P)); });
+  const shapeWithHoles = (P, holes) => {
+    const sh = new T.Shape(P.map(([x, y]) => new T.Vector2(x*M, -y*M)));
+    for(const H2 of holes){ const c = H2.reduce((a, q) => [a[0] + q[0]/H2.length, a[1] + q[1]/H2.length], [0, 0]);
+      sh.holes.push(new T.Path(H2.map(q => new T.Vector2((q[0] + (c[0] - q[0])*.01)*M, -(q[1] + (c[1] - q[1])*.01)*M)))); }
+    return sh;
+  };
+  for(const LV of levels){
+  items = ALL.filter(i => LEVEL_KINDS.has(i.kind) ? flr(i) === LV : LV === 1);
+  buildLevel = LV;
+  const root = new T.Group(), walls = new T.Group(), labels = new T.Group(); root.add(walls); root.add(labels); trueRoot.add(root);
+  const B0 = LV === 1 ? BASE : 0;
+  const colStart = R3.colliders.length, flStart = R3.floorInfo.length, doorStart = R3.doors.length;
+  try{
   // 床（部屋ごとに床材を選べる）
   const rooms = items.filter(it => it.kind !== 'door' && it.kind !== 'stroke' && it.kind !== 'furn' && it.kind !== 'roof' && it.kind !== 'land' && it.kind !== 'ext' && it.kind !== 'eline');
   let order = 0;
   for(const it of rooms){
     const P = ptsOf(it); if(P.length < 3) continue;
-    const shape = new T.Shape(P.map(([x,y]) => new T.Vector2(x*M, -y*M)));
+    if(it.type === 'void' && LV > 1) continue;                        // 吹き抜けは床なし
+    const holes = LV > 1 ? holesIn(P, stairPolys.concat(voidPolys.filter(V => V !== P))) : [];
+    const shape = shapeWithHoles(P, holes);
     const geo = new T.ShapeGeometry(shape); geo.rotateX(-Math.PI/2);
-    const lvl = it.type === 'porch' ? PORCH_TOP : it.type === 'entry' ? -0.15 : 0;
+    const lvl = LV > 1 ? 0 : it.type === 'porch' ? PORCH_TOP : it.type === 'entry' ? -0.15 : 0;
     const fk = floorFor(it);
     let mat;
     if(fk === 'plain') mat = new T.MeshStandardMaterial({color:C(itemColor(it)), roughness:.9});
@@ -2715,8 +2823,8 @@ function build3D(){
     if(mat.map){ const m = mat.map.userData.meters; mat.map.repeat.set(1/m, 1/m); }
     const floor = new T.Mesh(geo, mat);
     floor.position.y = lvl + 0.002 + (order++)*0.0015; floor.receiveShadow = true; root.add(floor);
-    R3.floors.push(floor); R3.floorInfo.unshift({P, lvl});
-    if(lvl > BASE + 0.02){
+    R3.floors.push(floor); R3.floorInfo.unshift({P, lvl, holes});
+    if(LV === 1 && lvl > BASE + 0.02){
       const skMat = it.type === 'porch' ? texMat('tile', itemColor(it), {roughness:.85}) : new T.MeshStandardMaterial({color:0xC9C7C1, roughness:1});
       if(skMat.map) skMat.map.repeat.set(1/skMat.map.userData.meters, 1/skMat.map.userData.meters);
       const skirt = new T.Mesh(new T.ExtrudeGeometry(shape, {depth:lvl - BASE, bevelEnabled:false}), skMat);
@@ -2735,7 +2843,8 @@ function build3D(){
   const inside = (xm, zm) => { const p = {x:xm/M, y:zm/M}; return inRooms.some(P => inPoly(p, P)); };
 
   // 壁の材質
-  const H = wallLow ? WALL_LOW : WALL_H;
+  // 2階があるとき、1階の壁は2階の床の厚みの分まで伸ばす（外から見て途切れないように）
+  const H = wallLow ? WALL_LOW : (LV === 1 && levels.length > 1 ? WALL_H + SLAB - .002 : WALL_H);
   const matInt = new T.MeshStandardMaterial({color:C(settings.wall), roughness:.95});
   const matTop = new T.MeshStandardMaterial({color:C('#3A3F45'), roughness:.9});
   const extK = 'ext-' + (settings.extTex || 'tile');
@@ -2789,7 +2898,7 @@ function build3D(){
   };
   // 基礎の帯（外側の面だけ）。縮めた端は角まで回り込むように伸ばす
   const addPlinth = w => {
-    if(!w || !w.out) return;
+    if(!w || !w.out || LV !== 1) return;
     // 開口部で切れた端は伸ばさない（となりの基礎と重ならないように）
     const pA = w.cA ? 0 : (w.eA < 0 ? -w.eA : 0) + 0.025, pB = w.cB ? 0 : (w.eB < 0 ? -w.eB : 0) + 0.025;
     const fh = -BASE - 0.02, tt = w.vert ? 0.028 : 0.026, off = w.th/2 + tt/2;
@@ -2799,7 +2908,7 @@ function build3D(){
     walls.add(f);
   };
   const {segs, accentOn, accentIv} = collectWalls();
-  for(const sg of segs) addPlinth(addWall(sg.a, sg.b, BASE, H, sg.acc, sg));
+  for(const sg of segs) addPlinth(addWall(sg.a, sg.b, B0, H, sg.acc, sg));
   const dLine = d => d.dir === 'h' ? d.y : d.x, dStart = d => d.dir === 'h' ? d.x : d.y;
   const accOf = d => accentOn(d.dir, dLine(d), dStart(d), dStart(d) + d.len);
 
@@ -2818,7 +2927,7 @@ function build3D(){
     const {u, P0, P1} = doorGeom(d), L = d.len*M;
     const sill = Math.min((d.sill||0)/1000, H - 0.1), top = Math.min(sill + (d.wh||1000)/1000, H);
     const acc = accOf(d);
-    const lo = addWall(P0, P1, BASE, Math.max(BASE, sill), acc, {dir:d.dir, exact:true, collide:false});
+    const lo = addWall(P0, P1, B0, Math.max(B0, sill), acc, {dir:d.dir, exact:true, collide:false});
     addPlinth(lo);
     addWall(P0, P1, top, H, acc, {dir:d.dir, exact:true, collide:false});
     R3.colliders.push([P0[0]*M, P0[1]*M, P1[0]*M, P1[1]*M, WALL_T/2]);
@@ -2890,8 +2999,8 @@ function build3D(){
     const isEntry = d.dtype === 'entry', dh = Math.min(isEntry ? ENTRY_H : DOOR_H, H);
     // 戸の下端＝両側の床の低いほう（玄関の土間やポーチは床より低い）。それより下は壁でふさぐ
     const fl = (k) => floorLevelAt(mx + n[0]*k*.3, mz + n[1]*k*.3);
-    const y0 = Math.max(BASE, Math.min(fl(1), fl(-1)));
-    if(y0 > BASE + .005) addPlinth(addWall(P0, P1, BASE, y0, accOf(d), {dir:d.dir, exact:true, collide:false}));
+    const y0 = Math.max(B0, Math.min(fl(1), fl(-1)));
+    if(y0 > B0 + .005) addPlinth(addWall(P0, P1, B0, y0, accOf(d), {dir:d.dir, exact:true, collide:false}));
     if(d.dtype !== 'open' && H > dh + 0.01) addWall(P0, P1, dh, H, accOf(d), {dir:d.dir, exact:true, collide:false});
     if(d.dtype === 'open') continue;
     const doorMat = isEntry ? entryMat : doorMatIn, casing = isEntry ? entryMat : casingIn;
@@ -2978,9 +3087,30 @@ function build3D(){
       g.updateMatrixWorld(true);
       for(const lp of g.userData.lightPts){ const v = new T.Vector3(lp.x, lp.y, lp.z).applyMatrix4(g.matrixWorld); lightPts.push({...lp, x:v.x, y:v.y, z:v.z}); }
     }
+    if(g.userData.robot){
+      const RB0 = g.userData.robot; g.updateMatrixWorld(true);
+      const hw = new T.Vector3(0, 0, RB0.home[1]).applyMatrix4(g.matrixWorld);
+      const st = roombaState[f.id] || 'dock';
+      const rb = {id:f.id, robot:RB0.robot, brush:RB0.brush, home:{x:hw.x, z:hw.z}, yaw0:g.rotation.y, y:g.position.y,
+        poly:(() => { const rm = roomAt(hw.x/M, hw.z/M); return rm ? ptsOf(rm) : null; })(),
+        state:st === 'dock' ? 'dock' : 'clean', x:hw.x, z:hw.z, head:g.rotation.y, t:0, bumpT:0, level:LV};
+      rb.robot.position.set(rb.x, rb.y, rb.z); rb.robot.rotation.y = rb.head; root.add(rb.robot);
+      const tapObj = {id:'rb:' + f.id, type:'roomba', t:0, target:0, seg:null, apply(){}, meshes:[], onTap(){ toggleRoomba(rb); }};
+      for(const obj of [g, rb.robot]) obj.traverse(o => { if(o.isMesh){ o.userData.door = tapObj; tapObj.meshes.push(o); } });
+      R3.doors.push(tapObj); R3.doorMeshes.push(...tapObj.meshes);
+      R3.roombas.push(rb);
+    }
+    if(g.userData.stairs){
+      // 歩くとき用：階段の上では段ごとの高さに立つ
+      R3.floorInfo.unshift(stairRamp(f, g.userData.stairs));
+    }
+    if(g.userData.posts){
+      g.updateMatrixWorld(true);
+      for(const [px, pz] of g.userData.posts){ const v = new T.Vector3(px, 0, pz).applyMatrix4(g.matrixWorld), t = .08; R3.colliders.push([v.x - t, v.z - t, v.x + t, v.z - t, 0], [v.x + t, v.z - t, v.x + t, v.z + t, 0], [v.x + t, v.z + t, v.x - t, v.z + t, 0], [v.x - t, v.z + t, v.x - t, v.z - t, 0]); }
+    }
     if(g.userData.doorObj){ const o = g.userData.doorObj; R3.doors.push(o); R3.doorMeshes.push(...o.meshes); }
     if(furnOf(f.ftype).garden && f.ftype !== 'shrub'){ const t = .15; R3.colliders.push([fx - t, fz - t, fx + t, fz - t, 0], [fx + t, fz - t, fx + t, fz + t, 0], [fx + t, fz + t, fx - t, fz + t, 0], [fx - t, fz + t, fx - t, fz - t, 0]); }
-    else if(f.fh >= 100 && f.ftype !== 'rug' && f.ftype !== 'tvwall' && !isLight(f)){
+    else if(f.fh >= 100 && f.ftype !== 'rug' && f.ftype !== 'tvwall' && f.ftype !== 'roomba' && f.ftype !== 'stairs' && !f.ftype.startsWith('carport') && !isLight(f)){
       const x1 = fb.x*M, z1 = fb.y*M, x2 = (fb.x+fb.w)*M, z2 = (fb.y+fb.h)*M;
       R3.colliders.push([x1,z1,x2,z1,0],[x2,z1,x2,z2,0],[x2,z2,x1,z2,0],[x1,z2,x1,z1,0]);
     }
@@ -2994,9 +3124,9 @@ function build3D(){
   const ceilG = new T.Group(), lightG = new T.Group();
   const ceilMat = new T.MeshStandardMaterial({color:C(settings.ceil || '#F6F5F2'), roughness:.95, side:T.DoubleSide});
   for(const it of rooms){
-    if(it.type === 'porch') continue;
+    if(it.type === 'porch' || it.type === 'void') continue;
     const P = ptsOf(it); if(P.length < 3) continue;
-    const geo = new T.ShapeGeometry(new T.Shape(P.map(([x, y]) => new T.Vector2(x*M, -y*M)))); geo.rotateX(-Math.PI/2);
+    const geo = new T.ShapeGeometry(shapeWithHoles(P, LV === 1 && levels.length > 1 ? holesIn(P, stairPolys.concat(voidPolys)) : [])); geo.rotateX(-Math.PI/2);
     const cm = new T.Mesh(geo, ceilMat); cm.position.y = WALL_H - .002; cm.receiveShadow = true; ceilG.add(cm);
   }
   // 部屋を照らす光：部屋ごとに1〜2個にまとめ、影を落とす光にする（壁や閉じたドアでさえぎられ、開けたドアからは光が入る）
@@ -3068,10 +3198,25 @@ function build3D(){
   }
   root.add(dayG);
   walls.add(ceilG); root.add(lightG);
-  R3.ceilG = ceilG; R3.lightG = lightG; R3.dayG = dayG; R3.dayLights = dayLights; R3.winList = winList;
+  R3.ceilGs.push(ceilG); R3.lightGs.push(lightG); R3.dayGs.push(dayG); R3.dayLights.push(...dayLights); R3.winList.push(...winList);
+  R3.wallsList.push({g:walls, base:B0}); R3.labelsList.push(labels);
+  } finally { items = ALL; buildLevel = 0; }
+  // この階で作ったぶつかる線・床・扉に階の番号を付け、2階は持ち上げる
+  for(let i=colStart; i<R3.colliders.length; i++) R3.colliders[i][5] = LV;
+  for(const f of R3.floorInfo) if(f.level == null) f.level = LV;
+  for(let i=doorStart; i<R3.doors.length; i++) R3.doors[i].level = LV;
+  root.position.y = levelY(LV);
+  R3.levelRoots.push(root);
+  }
+  // ===== 階ごとの組み立てここまで =====
+  const groupProxy = list => ({set visible(v){ for(const g of list) g.visible = v; }, get visible(){ return list.some(g => g.visible); }});
+  R3.ceilG = groupProxy(R3.ceilGs); R3.lightG = groupProxy(R3.lightGs); R3.dayG = groupProxy(R3.dayGs);
   updateInterior();
+  if(R3.levelRoots[1]) R3.levelRoots[1].visible = !hide2F;
+  $('bHide2F').hidden = levels.length < 2;
+  for(const l of R3.labelsList) l.visible = showLabels;
 
-  R3.root = root; R3.walls = walls; R3.labels = labels;
+  R3.root = root; R3.walls = R3.wallsList[0].g; R3.labels = labels;
   R3.scene.add(root);
 
   const sN = R3.sun, ext = size*0.8 + 4;
@@ -3084,6 +3229,8 @@ function build3D(){
 function buildRoof(T, H, ctx3){
   if(!settings.roofShow || wallLow) return null;
   const parts = items.filter(it => it.kind === 'roof');
+  // 屋根の範囲がひとつもない間取りでは、一番上の階にだけ全体の屋根をかける
+  if(!parts.length && buildLevel && R3 && R3.topLevel > 1 && (R3.allRoofParts || buildLevel !== R3.topLevel)) return null;
   const G = new T.Group();
   if(parts.length){
     for(const r of parts){
@@ -3460,12 +3607,19 @@ function furn3D(T, f){
       }
       break;
     }
-    case 'hanger': case 'hanger2': {
+    case 'hanger': case 'hanger2': case 'hanger3': {
       const pipe = Cy(.014, .014, W, 0, H, 0, metal); pipe.rotation.z = Math.PI/2;
-      for(const sx of [-1,1]) B(.02, .1, .05, sx*(W/2 - .01), H + .03, 0, metal);
-      RB(W, .02, D, .004, 0, H + .22, 0, main);
-      for(const sx of [-1,1]) B(.02, .2, .04, sx*(W/2 - .01), H + .12, bz + .02, main);
-      if(f.ftype === 'hanger' && H > .8){
+      const noBoard = f.ftype === 'hanger3';
+      if(noBoard){
+        // 板なし：両端を壁付けのブラケットで支えるだけ
+        const pm = mat(col, {roughness:.25, metalness:.7}); pipe.material = pm;
+        for(const sx of [-1,1]){ Cy(.035, .035, .012, sx*(W/2 - .006), H, 0, pm).rotation.z = Math.PI/2; B(.012, .06, .06, sx*(W/2 - .006), H, 0, pm); }
+      } else {
+        for(const sx of [-1,1]) B(.02, .1, .05, sx*(W/2 - .01), H + .03, 0, metal);
+        RB(W, .02, D, .004, 0, H + .22, 0, main);
+        for(const sx of [-1,1]) B(.02, .2, .04, sx*(W/2 - .01), H + .12, bz + .02, main);
+      }
+      if((f.ftype === 'hanger' || (noBoard && f.clothes)) && H > .8){
         const cols = ['#7C8FA6','#C9B79C','#A3B18A','#E4E1DA','#6B6F76','#B88B7A','#D6C7B2','#39424E'];
         const n = Math.max(1, Math.floor((W - .1)/.075));
         for(let i=0; i<n; i++){
@@ -3473,7 +3627,7 @@ function furn3D(T, f){
           const hg = put(new T.TorusGeometry(.012, .003, 4, 8, Math.PI), metal, n > 1 ? x : 0, H + .005, 0); hg.rotation.y = Math.PI/2;
           RB(.035, len, D*.78, .015, n > 1 ? x : 0, H - .035 - len/2, 0, mat(cols[Math.floor(rnd()*cols.length)], {roughness:.95}));
         }
-        for(let i=0; i < Math.floor(W/.45); i++) RB(.36, .22, D*.8, .02, -W/2 + .22 + i*.45, H + .34, 0, mat('#E3DCCF', {roughness:.95}));
+        if(!noBoard) for(let i=0; i < Math.floor(W/.45); i++) RB(.36, .22, D*.8, .02, -W/2 + .22 + i*.45, H + .34, 0, mat('#E3DCCF', {roughness:.95}));
       } else {
         for(let i=0; i < Math.max(2, Math.floor(W/.25)); i++){
           const x = -W/2 + .12 + i*.25; if(x > W/2 - .08) break;
@@ -3481,6 +3635,111 @@ function furn3D(T, f){
           const tri = put(new T.TorusGeometry(.2, .004, 4, 3), metal, x, H - .14, 0); tri.rotation.set(0, Math.PI/2, Math.PI/2); tri.scale.set(.55, 1, 1);
         }
       }
+      break;
+    }
+    case 'chest': {
+      // 白いチェスト：引き出し（上段は2つ、下は幅いっぱい）＋小さな取っ手
+      const top = .02, base = .05, bh = H - top - base, n = Math.max(3, Math.round(bh/.2));
+      B(W - .04, base, D - .04, 0, base/2, -.01, mat(shade(col, -.08)));
+      RB(W, bh, D - .01, .006, 0, base + bh/2, -.005);
+      RB(W + .01, top, D + .005, .004, 0, H - top/2, 0);
+      const rh = bh/n;
+      for(let i=0; i<n; i++){
+        const y = base + i*rh + rh/2, cols2 = (i === n - 1 && W > .6) ? 2 : 1;
+        for(let c2=0; c2<cols2; c2++){
+          const w2 = W/cols2, x = -W/2 + (c2 + .5)*w2;
+          B(w2 - .008, rh - .008, .018, x, y, fz - .009);
+          RB(Math.min(.14, w2*.3), .018, .02, .006, x, y + rh*.18, fz + .008, metal);
+        }
+      }
+      break;
+    }
+    case 'cbox': case 'cboxOpen': {
+      // カラーボックス：四角い枠が並ぶ。背板なしは向こう側まで抜けている
+      const th = .018, cols2 = Math.max(1, Math.round(W/.3)), rows = Math.max(1, Math.round(H/.3));
+      for(let i=0; i<=cols2; i++) B(th, H, D, -W/2 + th/2 + i*(W - th)/cols2, H/2, 0);
+      for(let j=0; j<=rows; j++) B(W, th, D, 0, th/2 + j*(H - th)/rows, 0);
+      if(f.ftype === 'cbox') B(W - .004, H - .004, .006, 0, H/2, bz + .003, mat(shade(col, -.05)));
+      break;
+    }
+    case 'stairs': {
+      // 直線階段：手前が1段目で奥へ上る。高さ＝床から床まで（2階の床の高さ）
+      const total = Math.max(.4, H), n = Math.max(3, Math.round(total/.195)), rh = total/n, tr = D/n;
+      const tread = mat(col, {roughness:.6}), riserM = mat('#F3F0E9', {roughness:.8});
+      for(let i=0; i<n; i++){
+        const top = (i + 1)*rh, z = D/2 - (i + .5)*tr;
+        B(W, top - .03, tr, 0, (top - .03)/2, z, riserM);
+        B(W + .01, .03, tr + .02, 0, top - .015, z + .01, tread);
+      }
+      // 手すり（片側）
+      const hm = mat('#8B6B4A', {roughness:.5});
+      const L2 = Math.hypot(D, total), rail = put(new T.CylinderGeometry(.018, .018, L2, 12), hm, W/2 - .05, total/2 + .85, 0);
+      rail.rotation.x = Math.atan2(D, total);
+      for(const zz of [D/2 - tr, -D/2 + tr]){ const yy = (D/2 - zz)/D*total; Cy(.012, .012, .85, W/2 - .05, yy + .425, zz, hm); }
+      g.userData.stairs = {n, rh, tr, total};
+      break;
+    }
+    case 'roomba': {
+      // ルンバの基地（奥）と本体（手前）。本体は掃除のときに走り出すので、別に作って build3D で置く
+      B(Math.min(.34, W*.75), .02, Math.min(.32, D*.7), 0, .01, bz + Math.min(.32, D*.7)/2, mat(shade(col, .1)));
+      RB(Math.min(.32, W*.72), H, Math.min(.2, D*.44), .02, 0, H/2, bz + Math.min(.2, D*.44)/2);
+      B(Math.min(.2, W*.45), .01, .005, 0, H*.8, bz + Math.min(.2, D*.44) + .002, mat('#5A5E62'));
+      const robot = new T.Group(), rr = .17;
+      const body = new T.Mesh(new T.CylinderGeometry(rr, rr, .085, 40), mat(col, {roughness:.35})); body.position.y = .0425 + .005; body.castShadow = true; robot.add(body);
+      const topM = new T.Mesh(new T.CylinderGeometry(rr*.92, rr*.95, .006, 40), mat(shade(col, .18), {roughness:.2, metalness:.3})); topM.position.y = .09; robot.add(topM);
+      const btn = new T.Mesh(new T.CylinderGeometry(.025, .025, .006, 20), mat('#8FA3B5', {emissive:new T.Color('#4E7FB0'), emissiveIntensity:.5})); btn.position.set(0, .095, .05); robot.add(btn);
+      const bumper = new T.Mesh(new T.CylinderGeometry(rr + .004, rr + .004, .05, 40, 1, true, -Math.PI/2, Math.PI), mat('#1B1C1E', {side:T.DoubleSide})); bumper.position.y = .04; robot.add(bumper);
+      const brush = new T.Group(); brush.position.set(rr*.65, .006, rr*.6); robot.add(brush);
+      for(let i=0; i<3; i++){ const arm = new T.Mesh(new T.BoxGeometry(.07, .002, .006), mat('#D8DADC')); arm.position.x = .035; const piv = new T.Group(); piv.rotation.y = i*Math.PI*2/3; piv.add(arm); brush.add(piv); }
+      g.userData.robot = {robot, brush, home:[0, Math.min(.2, D*.44) + rr + .02 + bz]};
+      break;
+    }
+    case 'carportC': case 'carportN': {
+      // カーポート：アルミ枠＋半透明の屋根（前が少し高い）。片足は片側の柱だけで支える
+      const frame = mat(col, {roughness:.35, metalness:.6}), roofM = new T.MeshStandardMaterial({color:C('#A8C0D0'), roughness:.1, metalness:.1, transparent:true, opacity:.42, side:T.DoubleSide, depthWrite:false});
+      const pw = .1, hF = H, hB = H - .08, cant = f.ftype === 'carportC';
+      const posts = cant ? [[-W/2 + pw, -D/2 + D*.12], [-W/2 + pw, D/2 - D*.12]] : [[-W/2 + pw, -D/2 + pw], [W/2 - pw, -D/2 + pw], [-W/2 + pw, D/2 - pw], [W/2 - pw, D/2 - pw]];
+      for(const [x, z] of posts) B(pw, (z > 0 ? hF : hB), pw*.9, x, (z > 0 ? hF : hB)/2, z, frame);
+      const beamY = zz => hB + (hF - hB)*(zz + D/2)/D;
+      const sideBeams = cant ? [-W/2 + pw] : [-W/2 + pw, W/2 - pw];
+      for(const x of sideBeams){ const bm = B(.08, .16, D, x, (hB + hF)/2 - .08, 0, frame); bm.rotation.x = -Math.atan2(hF - hB, D); }
+      const nr = Math.max(3, Math.round(D/1.2));
+      for(let i=0; i<=nr; i++){ const z = -D/2 + i*D/nr, y = beamY(z); B(W, .05, .05, 0, y, z, frame); }
+      for(const x of [-W/2, W/2]){ const e = B(.04, .08, D + .02, x, (hB + hF)/2 + .02, 0, frame); e.rotation.x = -Math.atan2(hF - hB, D); }
+      const roof = new T.Mesh(new T.BoxGeometry(W, .008, Math.hypot(D, hF - hB)), roofM); roof.position.set(0, (hB + hF)/2 + .035, 0); roof.rotation.x = -Math.atan2(hF - hB, D); g.add(roof);
+      g.userData.posts = posts;
+      break;
+    }
+    case 'shed': {
+      // 物置：縦リブの金属ボックス＋引き戸＋少し張り出した屋根
+      const rib = new T.MeshStandardMaterial({map:getTex('ext-siding', col), roughness:.5, metalness:.35}); rib.userData.keepMap = true;
+      B(W, .08, D, 0, .04, 0, mat('#5C6064'));
+      const bh = H - .12;
+      const bodyG = new T.BoxGeometry(W, bh, D), uv = bodyG.attributes.uv, dims = [[D, bh], [D, bh], [W, D], [W, D], [W, bh], [W, bh]];
+      for(let fc=0; fc<6; fc++) for(let i=0; i<4; i++){ const q = fc*4 + i; uv.setXY(q, uv.getX(q)*dims[fc][0]/1.2, uv.getY(q)*dims[fc][1]/1.2); }
+      put(bodyG, rib, 0, .08 + bh/2, 0);
+      const doorM = mat(shade(col, .06), {roughness:.45, metalness:.35});
+      for(const sx of [-1, 1]){ B(W/2 - .03, bh - .1, .012, sx*(W/4 - .005) + (sx > 0 ? -.01 : .01), .08 + bh/2, fz + .006 + (sx > 0 ? .012 : 0), doorM); B(.02, .18, .03, sx*.06, .08 + bh*.5, fz + .03, mat('#2A2C2F')); }
+      const roof = B(W + .1, .04, D + .12, 0, H - .02, .02, mat(shade(col, -.35), {roughness:.5, metalness:.4})); roof.rotation.x = .04;
+      break;
+    }
+    case 'bike': {
+      // 自転車：前後の車輪＋フレーム＋ハンドル＋サドル（奥行方向が前後）
+      const r2 = Math.min(.33, D*.19), zr = -D/2 + r2 + .02, zf = D/2 - r2 - .02, tire = mat('#1E1F21', {roughness:.8}), rimM = mat('#C8CCD0', {roughness:.25, metalness:.8});
+      for(const z of [zr, zf]){
+        const t = put(new T.TorusGeometry(r2, .022, 10, 40), tire, 0, r2 + .003, z); t.rotation.y = Math.PI/2;
+        const rim = put(new T.TorusGeometry(r2*.9, .008, 6, 40), rimM, 0, r2 + .003, z); rim.rotation.y = Math.PI/2;
+        for(let i=0; i<8; i++){ const sp = put(new T.CylinderGeometry(.002, .002, r2*1.8, 4), rimM, 0, r2 + .003, z); sp.rotation.x = i*Math.PI/8; }
+      }
+      const fm = mat(col, {roughness:.3, metalness:.4});
+      const tube = (a, b, rad) => { const dx = b[0]-a[0], dy = b[1]-a[1], dz = b[2]-a[2], L = Math.hypot(dx, dy, dz); const me = put(new T.CylinderGeometry(rad, rad, L, 10), fm, (a[0]+b[0])/2, (a[1]+b[1])/2, (a[2]+b[2])/2); me.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), new T.Vector3(dx/L, dy/L, dz/L)); return me; };
+      const bb = [0, r2*.95, (zr + zf)/2 - .05], seat = [0, H*.78, zr + .28], head = [0, H*.82, zf - .2], rh = [0, r2, zr], fh = [0, r2, zf];
+      tube(rh, bb, .014); tube(rh, seat, .012); tube(bb, seat, .018); tube(bb, head, .02); tube(seat, head, .016); tube(head, fh, .016);
+      tube(head, [0, H*.95, zf - .26], .014);
+      const bar = put(new T.CylinderGeometry(.012, .012, .56, 10), fm, 0, H*.95, zf - .26); bar.rotation.z = Math.PI/2;
+      for(const sx of [-1, 1]) Cy(.018, .018, .1, sx*.26, H*.95, zf - .26, tire).rotation.z = Math.PI/2;
+      RB(.12, .045, .26, .02, 0, H*.8, zr + .26, mat('#2A2B2D', {roughness:.7}));
+      put(new T.CylinderGeometry(.09, .09, .006, 20), rimM, .04, bb[1], bb[2]).rotation.z = Math.PI/2;
       break;
     }
     case 'closet': {
@@ -3994,7 +4253,8 @@ function tap3D(cx, cy){
 
 /* 壁・扉との当たり判定（円と線分） */
 function collide(px, pz){
-  const segs = R3.colliders.concat(R3.doors.map(d => d.seg).filter(Boolean));
+  const lv = playerLevel();
+  const segs = R3.colliders.filter(c => (c[5] || 1) === lv).concat(R3.doors.filter(d => (d.level || 1) === lv).map(d => d.seg).filter(Boolean));
   for(let it=0; it<4; it++){
     for(const [ax, az, bx, bz, ht] of segs){
       const dx = bx-ax, dz = bz-az, L2 = dx*dx + dz*dz;
@@ -4014,13 +4274,35 @@ function movePlayer(strafe, fwd){
   const nx = player.x + (-sy*fwd + cy*strafe), nz = player.z + (-cy*fwd - sy*strafe);
   const [x, z] = collide(nx, nz); player.x = x; player.z = z;
 }
-function floorLevelAt(x, z){
-  const cx = x/M, cz = z/M;
-  for(const f of R3.floorInfo) if(inPoly({x:cx, y:cz}, f.P)) return f.lvl;
-  return BASE;
+/* 階段の上の高さ：手前の端から奥へ何割進んだかで段の高さを決める（家具の位置と向きから計算） */
+function stairRamp(f, S2){
+  const b2 = bbox(f), Dd = (f.fd || 3640)/1000, th = -(f.rot || 0)*Math.PI/180;
+  const cx = (b2.x + b2.w/2)*M, cz = (b2.y + b2.h/2)*M, fx = Math.sin(th), fz = Math.cos(th);   // 手前（1段目）の向き
+  return {P:[[b2.x, b2.y], [b2.x + b2.w, b2.y], [b2.x + b2.w, b2.y + b2.h], [b2.x, b2.y + b2.h]], lvl:0,
+    ramp:(x, z) => { const proj = (x - cx)*fx + (z - cz)*fz, u = clamp((Dd/2 - proj)/Dd, 0, 1); return Math.min(S2.total, (Math.floor(u*S2.n - 1e-6) + 1)*S2.rh); }};
+}
+function floorLevelAt(x, z, footY){
+  const cx = x/M, cz = z/M, p = {x:cx, y:cz};
+  const inF = f => inPoly(p, f.P) && !(f.holes && f.holes.some(H2 => inPoly(p, H2)));
+  if(buildLevel){                                   // 組み立て中：その階の床だけ（階の中での高さ）
+    for(const f of R3.floorInfo) if(f.level == null && inF(f)) return f.ramp ? f.ramp(x, z) : f.lvl;
+    return buildLevel > 1 ? 0 : BASE;
+  }
+  // 歩いているとき：足もとより少し上（段差0.45m）までのうち一番高い床に立つ。階段は段ごとの高さ
+  const fy = footY ?? player.fy ?? 0;
+  let best = null, low = null;
+  for(const f of R3.floorInfo){
+    if(!inF(f)) continue;
+    if(f.level > 1 && hide2F) continue;
+    const y = levelY(f.level || 1) + (f.ramp ? f.ramp(x, z) : f.lvl);
+    if(y <= fy + .45 && (best === null || y > best)) best = y;
+    if(low === null || y < low) low = y;
+  }
+  return best ?? low ?? BASE;
 }
 function spawnPlayer(){
   const rooms = items.filter(i => i.kind !== 'door' && i.kind !== 'stroke' && i.kind !== 'furn' && i.kind !== 'roof' && i.kind !== 'land' && i.kind !== 'ext' && i.kind !== 'eline' && i.type !== 'porch');
+  const r1 = rooms.filter(i => flr(i) === 1); if(r1.length) rooms.splice(0, rooms.length, ...r1);
   const pick = rooms.find(i => i.type === 'entry') || rooms.find(i => i.type === 'ldk')
     || rooms.slice().sort((a,b) => cellArea(b) - cellArea(a))[0];
   const c = pick ? labelPoint(pick) : {x:R3.center[0]/M, y:R3.center[1]/M};
@@ -4029,7 +4311,7 @@ function spawnPlayer(){
   player.yaw = (Math.abs(tx) + Math.abs(tz) > 0.3) ? Math.atan2(-tx, -tz) : 0;
   player.pitch = -0.08; player.target = null;
   const [x, z] = collide(player.x, player.z); player.x = x; player.z = z;
-  player.eye = floorLevelAt(player.x, player.z) + EYE;
+  player.fy = floorLevelAt(player.x, player.z, 0); player.eye = player.fy + EYE;
 }
 /* 天井・室内照明は「屋根あり＋歩いてみる」のときだけ */
 /* 影は変化があったときだけ計算し直す（室内の影付きの光が多くて重いため） */
@@ -4063,6 +4345,7 @@ let lastT = 0;
 function loop3D(now){
   if(!mode3d){ R3.raf = 0; return; }
   const dt = Math.min(0.05, lastT ? (now - lastT)/1000 : 0.016); lastT = now;
+  if(R3.roombas) for(const rb of R3.roombas) roombaStep(rb, dt);
   // 扉の開閉アニメーション
   for(const d of R3.doors){
     if(d.t !== d.target){ d.t = d.target > d.t ? Math.min(1, d.t + dt*2.2) : Math.max(0, d.t - dt*2.2); d.apply(d.t); if(d.type === 'shade') updateDaylight(); requestShadow(); }
@@ -4090,7 +4373,8 @@ function loop3D(now){
         if(Math.hypot(player.x - bx, player.z - bz) < step*0.2){ if((player.stuck += dt) > 0.4) player.target = null; } else player.stuck = 0;
       }
     }
-    const eyeT = floorLevelAt(player.x, player.z) + EYE;
+    player.fy = floorLevelAt(player.x, player.z, player.fy);
+    const eyeT = player.fy + EYE;
     player.eye += (eyeT - player.eye)*Math.min(1, dt*8);
     const c = R3.camera;
     c.position.set(player.x, player.eye, player.z);
@@ -4244,6 +4528,42 @@ $('sunLat').addEventListener('change', e => { settings.lat = +e.target.value; sa
 $('sunNorth').addEventListener('change', e => { settings.north = +e.target.value; save(); buildSunPath(); applySun(); renderSunUI(true); scheduleRender(); });
 ['pointerdown','touchstart','touchmove','wheel'].forEach(ev => $('sunPanel').addEventListener(ev, e => e.stopPropagation(), {passive:true}));
 
+/* ===== ルンバの掃除 ===== */
+const roombaState = {};
+function toggleRoomba(rb){
+  if(rb.state === 'dock'){ rb.state = 'clean'; rb.t = 0; rb.head = rb.yaw0; roombaState[rb.id] = 'clean'; toast('ルンバが掃除を始めました（もう一度タップで基地へ戻ります）'); }
+  else { rb.state = 'return'; rb.t = 0; roombaState[rb.id] = 'dock'; toast('ルンバが基地へ戻ります'); }
+}
+// 置いてある部屋の中で、壁・家具・閉じたドアから離れた場所だけ走れる
+function roombaOK(rb, x, z){
+  const r = .19;
+  if(rb.poly){
+    const p = {x:x/M, y:z/M}; if(!inPoly(p, rb.poly)) return false;
+    for(let i=0; i<rb.poly.length; i++) if(distSeg([p.x, p.y], rb.poly[i], rb.poly[(i+1) % rb.poly.length])*M < r + .06) return false;
+  } else if(Math.hypot(x - rb.home.x, z - rb.home.z) > 3) return false;
+  for(const sg of R3.colliders) if((sg[5] || 1) === (rb.level || 1) && distSeg([x, z], [sg[0], sg[1]], [sg[2], sg[3]]) < r + sg[4]) return false;
+  for(const d of R3.doors) if(d.seg && (d.level || 1) === (rb.level || 1) && distSeg([x, z], [d.seg[0], d.seg[1]], [d.seg[2], d.seg[3]]) < r + d.seg[4]) return false;
+  return true;
+}
+function roombaStep(rb, dt){
+  if(rb.state === 'dock') return;
+  rb.t += dt; rb.brush.rotation.y += dt*20;
+  if(rb.state === 'clean' && rb.t > 150){ rb.state = 'return'; rb.t = 0; roombaState[rb.id] = 'dock'; }
+  const sp = .3;
+  if(rb.state === 'return'){
+    const dx = rb.home.x - rb.x, dz = rb.home.z - rb.z, dist = Math.hypot(dx, dz);
+    if(dist < .06 || rb.t > 45){ rb.state = 'dock'; rb.x = rb.home.x; rb.z = rb.home.z; rb.head = rb.yaw0; rb.robot.position.set(rb.x, rb.y, rb.z); rb.robot.rotation.y = rb.head; return; }
+    if(rb.bumpT <= 0){ const want = Math.atan2(dx, dz); let d2 = ((want - rb.head + Math.PI) % (Math.PI*2) + Math.PI*2) % (Math.PI*2) - Math.PI; rb.head += clamp(d2, -dt*3, dt*3); }
+  } else if(Math.random() < dt*.08) rb.head += (Math.random() - .5)*.8;       // ときどき少し向きを変える
+  rb.bumpT -= dt;
+  const nx = rb.x + Math.sin(rb.head)*sp*dt, nz = rb.z + Math.cos(rb.head)*sp*dt;
+  const nearHome = rb.state === 'return' && Math.hypot(nx - rb.home.x, nz - rb.home.z) < .35;
+  // すでに家具などに重なっている位置からは、抜け出す方向へ動けるようにする
+  if(nearHome || roombaOK(rb, nx, nz) || !roombaOK(rb, rb.x, rb.z)){ rb.x = nx; rb.z = nz; }
+  else { rb.head += (Math.PI*.55 + Math.random()*Math.PI*.8)*(Math.random() < .5 ? 1 : -1); rb.bumpT = .9; }
+  rb.robot.position.set(rb.x, rb.y, rb.z); rb.robot.rotation.y = rb.head;
+}
+
 /* ===== 3Dでライトを長押しして調整するパネル ===== */
 function pickLight(cx, cy){
   if(!R3 || !R3.doorMeshes) return null;
@@ -4310,8 +4630,8 @@ async function enter3D(){
   // 真上（2Dと同じ向き）から、壁が立ち上がりながら斜めの視点へ
   const r = fitRadius();
   Object.assign(orbit, {theta:0, phi:0.02, r, tx:R3.center[0], ty:0, tz:R3.center[1]});
-  R3.walls.scale.y = 0.001; R3.walls.position.y = BASE*(1 - 0.001);
-  tweenTo(defaultView(), 1300, e => { const sy = Math.max(0.001, e); R3.walls.scale.y = sy; R3.walls.position.y = BASE*(1 - sy); });
+  for(const w of R3.wallsList){ w.g.scale.y = 0.001; w.g.position.y = w.base*(1 - 0.001); }
+  tweenTo(defaultView(), 1300, e => { const sy = Math.max(0.001, e); for(const w of R3.wallsList){ w.g.scale.y = sy; w.g.position.y = w.base*(1 - sy); } });
   if(!R3.raf) R3.raf = requestAnimationFrame(loop3D);
 }
 function exit3D(){
@@ -4328,6 +4648,7 @@ $('bar3d').addEventListener('click', e => {
   const v = b.dataset.v;
   if(v === 'exit') exit3D();
   if(v === 'finish') openFinish();
+  if(v === 'hide2f'){ hide2F = !hide2F; b.classList.toggle('on', hide2F); b.textContent = hide2F ? '2Fを表示' : '2Fを隠す'; if(R3.levelRoots[1]) R3.levelRoots[1].visible = !hide2F; requestShadow(); }
   if(v === 'sun'){ const open = !$('sunPanel').classList.contains('open'); $('sunPanel').classList.toggle('open', open); if(!open) $('sunPanel').classList.remove('mini'); b.classList.toggle('on', open); if(open) renderSunUI(true); applySun(); }
   if(v === 'roof'){ settings.roofShow = !settings.roofShow; applySettings(); }
   if(v === 'walk') setWalk(!walk);
@@ -4335,7 +4656,7 @@ $('bar3d').addEventListener('click', e => {
   if(v === 'top') tweenTo({theta:0, phi:0.02, r:fitRadius(), tx:R3.center[0], ty:0, tz:R3.center[1]}, 800);
   if(v === 'walls'){ wallLow = !wallLow; b.textContent = wallLow ? '壁を高くする' : '壁を低くする'; b.classList.toggle('on', wallLow); build3D(); if(walk){ const [x, z] = collide(player.x, player.z); player.x = x; player.z = z; } }
   if(v === 'spin'){ autoSpin = !autoSpin; b.classList.toggle('on', autoSpin); }
-  if(v === 'labels'){ showLabels = !showLabels; b.classList.toggle('on', showLabels); if(R3.labels) R3.labels.visible = showLabels; }
+  if(v === 'labels'){ showLabels = !showLabels; b.classList.toggle('on', showLabels); if(R3.labelsList) for(const l of R3.labelsList) l.visible = showLabels; }
 });
 
 /* ===== 外観・色と素材の設定 ===== */
